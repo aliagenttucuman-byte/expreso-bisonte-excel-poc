@@ -1,0 +1,22 @@
+[project]
+name = "excel-merger-poc"
+version = "0.1.0"
+description = "PoC para mergear Excels con Polars + FastAPI"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic-settings>=2.6",
+    "python-multipart>=0.0.17",
+    "polars>=1.15",
+    "openpyxl>=3.1",
+    "xlsx2csv>=0.8",
+    "openai>=1.54",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.9",
+]
