@@ -149,7 +149,10 @@ async def contado_export(payload: dict):
 async def contado_save(payload: dict):
     """
     Recibe { columns: [...], rows: [...], updated_by?: '...' }
-    Hace UPSERT de todas las filas en contado_guias por clave nro.
+    UPSERT en dos tablas del nuevo schema:
+      - guia: datos base de Transoft
+      - contado_anotacion: campos manuales de Edith
+    También graba en contado_guias (legacy) para compatibilidad.
     Devuelve { saved: N, updated_at: '...' }
     """
     try:
@@ -162,15 +165,13 @@ async def contado_save(payload: dict):
     if not rows:
         return {"saved": 0, "updated_at": datetime.now().isoformat()}
 
-    # Buscar índice de la columna "nro" (clave primaria)
-    try:
-        idx_nro = columns.index("nro")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="La tabla no tiene columna 'nro'")
-
-    # Construir lista de dicts mapeados
-    # Las rows pueden llegar como lista de listas (array) o lista de dicts (objeto)
     is_dict_rows = len(rows) > 0 and isinstance(rows[0], dict)
+
+    if not is_dict_rows:
+        try:
+            columns.index("nro")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="La tabla no tiene columna 'nro'")
 
     records = []
     for row in rows:
@@ -184,7 +185,6 @@ async def contado_save(payload: dict):
                     val = row[idx] if idx < len(row) else None
                 else:
                     val = None
-            # Conversiones de tipo
             if col_db in ("importe", "saldo"):
                 val = _to_num(val)
             elif col_db == "dias_atraso":
@@ -200,11 +200,63 @@ async def contado_save(payload: dict):
     if not records:
         raise HTTPException(status_code=400, detail="No hay filas con 'nro' válido")
 
-    # UPSERT en bloque
     try:
         conn = _get_conn()
         cur  = conn.cursor()
-        upsert_sql = """
+
+        # 1. UPSERT en tabla guia (datos base Transoft)
+        sql_guia = """
+            INSERT INTO guia (
+                nro, guiafec, razsocc, clase, fechaedit,
+                sucori, sucdest, importe, saldo, succobro,
+                tiporec, sucursal, nrogen_a, estado_actual,
+                ultima_vez_visto, fuente
+            ) VALUES (
+                %(nro)s, %(guiafec)s, %(razsocc)s, %(clase)s, %(fechaedit)s,
+                %(sucori)s, %(sucdest)s, %(importe)s, %(saldo)s, %(succobro)s,
+                %(tiporec)s, %(sucursal)s, %(nrogen_a)s, %(estado)s,
+                %(updated_at)s, 'transoft'
+            )
+            ON CONFLICT (nro) DO UPDATE SET
+                guiafec        = EXCLUDED.guiafec,
+                razsocc        = EXCLUDED.razsocc,
+                clase          = EXCLUDED.clase,
+                fechaedit      = EXCLUDED.fechaedit,
+                sucori         = EXCLUDED.sucori,
+                sucdest        = EXCLUDED.sucdest,
+                importe        = EXCLUDED.importe,
+                saldo          = EXCLUDED.saldo,
+                succobro       = EXCLUDED.succobro,
+                tiporec        = EXCLUDED.tiporec,
+                sucursal       = EXCLUDED.sucursal,
+                nrogen_a       = EXCLUDED.nrogen_a,
+                estado_actual  = EXCLUDED.estado_actual,
+                ultima_vez_visto = EXCLUDED.ultima_vez_visto
+        """
+        psycopg2.extras.execute_batch(cur, sql_guia, records, page_size=200)
+
+        # 2. UPSERT en contado_anotacion (campos manuales de Edith)
+        sql_anotacion = """
+            INSERT INTO contado_anotacion (
+                nro, justificacion, referente, estado_gestion,
+                observacion, dias_atraso, updated_at, updated_by
+            ) VALUES (
+                %(nro)s, %(justificacion)s, %(referente)s, %(estado)s,
+                %(observacion)s, %(dias_atraso)s, %(updated_at)s, %(updated_by)s
+            )
+            ON CONFLICT (nro) DO UPDATE SET
+                justificacion  = EXCLUDED.justificacion,
+                referente      = EXCLUDED.referente,
+                estado_gestion = EXCLUDED.estado_gestion,
+                observacion    = EXCLUDED.observacion,
+                dias_atraso    = EXCLUDED.dias_atraso,
+                updated_at     = EXCLUDED.updated_at,
+                updated_by     = EXCLUDED.updated_by
+        """
+        psycopg2.extras.execute_batch(cur, sql_anotacion, records, page_size=200)
+
+        # 3. UPSERT en contado_guias (legacy — compatibilidad con código anterior)
+        sql_legacy = """
             INSERT INTO contado_guias
                 (nro, justificacion, referente, estado, observacion, dias_atraso,
                  guiafec, razsocc, clase, fechaedit, sucori, sucdest,
@@ -236,7 +288,8 @@ async def contado_save(payload: dict):
                 updated_at    = EXCLUDED.updated_at,
                 updated_by    = EXCLUDED.updated_by
         """
-        psycopg2.extras.execute_batch(cur, upsert_sql, records, page_size=200)
+        psycopg2.extras.execute_batch(cur, sql_legacy, records, page_size=200)
+
         conn.commit()
         cur.close()
         conn.close()
