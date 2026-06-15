@@ -1084,6 +1084,17 @@ export default function HomePage() {
       localStorage.setItem('contado_last_run', tsBD)
       setContadoLastRun(tsBD)
 
+      // Persistir las rows EDITADAS en localStorage (no las originales)
+      // Así "Ver último FINAL" muestra lo que Edith guardó, no la versión pre-edición
+      try {
+        const updatedTableData = { columns: contadoTableData.columns, rows: editedRows }
+        localStorage.setItem('contado_last_table', JSON.stringify(updatedTableData))
+        setContadoTableData(updatedTableData)
+        setContadoHasSaved(true)
+      } catch (_) {
+        // localStorage lleno — no es crítico, la BD ya tiene los datos
+      }
+
       // 2. Exportar Excel (descarga)
       let origB64 = ''
       if (contadoFinalBytes) {
