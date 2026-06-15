@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import client from '../api/client'
+import ContadoTable, { type ContadoRow } from '../components/ContadoTable'
 
 interface UploadedFile {
   file_id: string
@@ -85,6 +86,7 @@ interface SheetPreviewData {
 
 const PROCESSES = [
   { id: 'cdo_pf', label: 'CDO / PTE Facturación' },
+  { id: 'contado', label: '💰 Cobranzas Contado' },
   { id: 'proc_2', label: 'Proceso 2' },
   { id: 'proc_3', label: 'Proceso 3' },
   { id: 'proc_4', label: 'Proceso 4' },
@@ -144,6 +146,22 @@ export default function HomePage() {
     pf?: SheetPreviewData
   } | null>(null)
   const [saveEditLoading, setSaveEditLoading] = useState<'cdo' | 'pf' | null>(null)
+
+  // ── Cobranzas Contado state ──────────────────────────────────────────────
+  const [contadoInicial, setContadoInicial] = useState<File | null>(null)
+  const [contadoSistema, setContadoSistema] = useState<File | null>(null)
+  const [contadoLoading, setContadoLoading] = useState(false)
+  const [contadoStats, setContadoStats] = useState<{existentes:number;nuevos:number;eliminados:number;estado_cambio:number} | null>(null)
+  const [contadoError, setContadoError] = useState('')
+  const [contadoDownloadUrl, setContadoDownloadUrl] = useState('')
+  const [contadoFinalBytes, setContadoFinalBytes] = useState<Blob | null>(null)
+  const [contadoTableData, setContadoTableData] = useState<{columns: string[]; rows: ContadoRow[]} | null>(null)
+  const [contadoTableLoading, setContadoTableLoading] = useState(false)
+  const [contadoSaveLoading, setContadoSaveLoading] = useState(false)
+  const [contadoLastRun, setContadoLastRun] = useState<string>(() => localStorage.getItem('contado_last_run') || '')
+  const [contadoHasSaved, setContadoHasSaved] = useState<boolean>(() => !!localStorage.getItem('contado_last_table'))
+  const [contadoRestoring, setContadoRestoring] = useState(false)
+  const contadoTableRef = useRef<HTMLDivElement>(null)
 
   const sourceCandidates = files.filter((f) => {
     const n = (f.filename || '').toLowerCase().trim()
@@ -414,6 +432,14 @@ export default function HomePage() {
 
   useEffect(() => {
     loadFiles(true)
+    // Restaurar tabla del último FINAL si existe
+    const saved = localStorage.getItem('contado_last_table')
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved)
+        setContadoTableData(parsed)
+      } catch {}
+    }
   }, [])
 
   const onEditPipelineCell = (kind: 'cdo' | 'pf', rowIndex: number, column: string, value: string) => {
@@ -983,6 +1009,267 @@ export default function HomePage() {
     )
   }
 
+  /* ───────────── COBRANZAS CONTADO ───────────── */
+
+  const runContadoMerge = async () => {
+    if (!contadoInicial || !contadoSistema) {
+      setContadoError('Seleccioná los dos archivos: INICIAL y SISTEMA.')
+      return
+    }
+    setContadoLoading(true)
+    setContadoError('')
+    setContadoStats(null)
+    setContadoDownloadUrl('')
+    setContadoTableData(null)
+    try {
+      const fd = new FormData()
+      fd.append('inicial', contadoInicial)
+      fd.append('sistema', contadoSistema)
+      const resp = await client.post('/excel/merge-contado', fd, { responseType: 'blob' })
+      const blob = resp.data as Blob
+      const url = URL.createObjectURL(blob)
+      setContadoDownloadUrl(url)
+      setContadoFinalBytes(blob)
+      setContadoStats({
+        existentes:    parseInt(resp.headers['x-stats-existentes']   || '0'),
+        nuevos:        parseInt(resp.headers['x-stats-nuevos']       || '0'),
+        eliminados:    parseInt(resp.headers['x-stats-eliminados']   || '0'),
+        estado_cambio: parseInt(resp.headers['x-stats-estadocambio'] || '0'),
+      })
+      // Cargar tabla automáticamente
+      const ts = new Date().toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+      localStorage.setItem('contado_last_run', ts)
+      setContadoLastRun(ts)
+      await loadContadoTable(blob)
+    } catch (err: any) {
+      setContadoError(toErrorMessage(err))
+    } finally {
+      setContadoLoading(false)
+    }
+  }
+
+  const loadContadoTable = async (blob: Blob) => {
+    setContadoTableLoading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', blob, 'FINAL.xlsx')
+      const resp = await client.post('/excel/contado/preview', fd)
+      const tableData = resp.data as { columns: string[]; rows: ContadoRow[] }
+      setContadoTableData(tableData)
+      // Persistir para "Ver último FINAL"
+      try {
+        localStorage.setItem('contado_last_table', JSON.stringify(tableData))
+        setContadoHasSaved(true)
+      } catch {}
+    } catch (err: any) {
+      setContadoError(toErrorMessage(err))
+    } finally {
+      setContadoTableLoading(false)
+    }
+  }
+
+  const handleContadoSave = async (editedRows: ContadoRow[]) => {
+    if (!contadoTableData) return
+    setContadoSaveLoading(true)
+    try {
+      // 1. Guardar en PostgreSQL (UPSERT)
+      const saveResp = await client.post('/excel/contado/save', {
+        columns: contadoTableData.columns,
+        rows: editedRows,
+        updated_by: 'edith',
+      })
+      const { saved, updated_at } = saveResp.data
+      // Actualizar badge de último procesamiento con info de BD
+      const tsBD = `BD ✅ ${saved} guías · ${updated_at}`
+      localStorage.setItem('contado_last_run', tsBD)
+      setContadoLastRun(tsBD)
+
+      // 2. Exportar Excel (descarga)
+      let origB64 = ''
+      if (contadoFinalBytes) {
+        const buf = await contadoFinalBytes.arrayBuffer()
+        const bytes = new Uint8Array(buf)
+        let binary = ''
+        for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
+        origB64 = btoa(binary)
+      }
+      const resp = await client.post('/excel/contado/export', {
+        columns: contadoTableData.columns,
+        rows: editedRows,
+        original_bytes_b64: origB64,
+      }, { responseType: 'blob' })
+      const url = URL.createObjectURL(resp.data as Blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `CONTADO_EDITADO_${new Date().toISOString().slice(0,10)}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err: any) {
+      setContadoError(toErrorMessage(err))
+    } finally {
+      setContadoSaveLoading(false)
+    }
+  }
+
+  const renderContadoPanel = () => (
+    <div style={{ padding: '1rem 0' }}>
+      <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.2rem', background: '#fff', marginBottom: '1rem' }}>
+        <h3 style={{ marginTop: 0, marginBottom: '0.3rem' }}>💰 Merge Cobranzas Contado</h3>
+        <p style={{ color: '#475569', fontSize: '0.84rem', marginBottom: '1rem', marginTop: 0 }}>
+          Cargá la planilla <strong>INICIAL</strong> (trabajo acumulado de Edith) y la planilla <strong>SISTEMA</strong> (descarga fresca de Transoft). El sistema genera el <strong>FINAL</strong> listo para trabajar.
+        </p>
+
+        {/* Upload INICIAL */}
+        <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: '1fr 1fr', marginBottom: '1rem' }}>
+          <div>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', fontSize: '0.85rem' }}>
+              📂 INICIAL <span style={{ color: '#64748b', fontWeight: 400 }}>(planilla que venís trabajando)</span>
+            </label>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={(e) => setContadoInicial(e.target.files?.[0] ?? null)}
+              style={{ fontSize: '0.83rem', width: '100%' }}
+            />
+            {contadoInicial && (
+              <div style={{ fontSize: '0.78rem', color: '#16a34a', marginTop: '0.25rem' }}>✓ {contadoInicial.name}</div>
+            )}
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', fontSize: '0.85rem' }}>
+              🔄 SISTEMA <span style={{ color: '#64748b', fontWeight: 400 }}>(descarga de hoy de Transoft)</span>
+            </label>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={(e) => setContadoSistema(e.target.files?.[0] ?? null)}
+              style={{ fontSize: '0.83rem', width: '100%' }}
+            />
+            {contadoSistema && (
+              <div style={{ fontSize: '0.78rem', color: '#16a34a', marginTop: '0.25rem' }}>✓ {contadoSistema.name}</div>
+            )}
+          </div>
+        </div>
+
+        {/* Último procesamiento */}
+        {(contadoLastRun || contadoHasSaved) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+            {contadoLastRun && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.35rem 0.75rem', fontSize: '0.82rem', color: '#15803d' }}>
+                ✅ Último procesamiento: <strong>{contadoLastRun}</strong>
+              </div>
+            )}
+            {contadoHasSaved && (
+              <button
+                onClick={() => {
+                  const saved = localStorage.getItem('contado_last_table')
+                  if (saved) {
+                    try {
+                      setContadoTableData(JSON.parse(saved))
+                      setTimeout(() => contadoTableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+                    } catch {}
+                  }
+                }}
+                style={{ padding: '0.35rem 0.9rem', background: '#0f172a', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer' }}
+              >
+                👁 Ver último FINAL
+              </button>
+            )}
+          </div>
+        )}
+
+
+        {/* Botón ejecutar */}
+        <button
+          onClick={runContadoMerge}
+          disabled={contadoLoading || !contadoInicial || !contadoSistema}
+          style={{
+            padding: '0.6rem 1.4rem',
+            background: contadoLoading ? '#94a3b8' : '#2563eb',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '8px',
+            fontWeight: 700,
+            fontSize: '0.9rem',
+            cursor: contadoLoading ? 'not-allowed' : 'pointer',
+            marginBottom: '1rem',
+          }}
+        >
+          {contadoLoading ? '⏳ Generando FINAL...' : '⚡ Generar FINAL'}
+        </button>
+
+        {/* Error */}
+        {contadoError && (
+          <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.6rem 0.9rem', color: '#b91c1c', fontSize: '0.84rem', marginBottom: '0.8rem' }}>
+            ❌ {contadoError}
+          </div>
+        )}
+
+        {/* Estadísticas + descarga */}
+        {contadoStats && contadoDownloadUrl && (
+          <div>
+            <div style={{ display: 'grid', gap: '0.7rem', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: '1rem' }}>
+              {[
+                { label: 'Existentes preservados', value: contadoStats.existentes, color: '#16a34a' },
+                { label: '🔴 Estado cambió', value: contadoStats.estado_cambio, color: '#dc2626' },
+                { label: '🟡 Nuevos del día', value: contadoStats.nuevos, color: '#d97706' },
+                { label: 'Eliminados (cobrados)', value: contadoStats.eliminados, color: '#6b7280' },
+              ].map((s) => (
+                <div key={s.label} style={{ border: '1px solid #e2e8f0', borderRadius: '10px', padding: '0.7rem', background: '#f8fafc', textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#475569', marginTop: '0.15rem' }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '10px', padding: '0.8rem 1rem', marginBottom: '0.8rem', fontSize: '0.84rem', color: '#166534' }}>
+              <strong>✅ FINAL generado.</strong> {contadoStats.existentes + contadoStats.nuevos} guías totales.
+              {contadoStats.estado_cambio > 0 && <> · <strong style={{ color: '#dc2626' }}>{contadoStats.estado_cambio} en ROJO</strong> (estado cambió en Transoft — revisar).</>}
+              {contadoStats.nuevos > 0 && <> · <strong style={{ color: '#d97706' }}>{contadoStats.nuevos} en AMARILLO</strong> (nuevas del día — carga manual).</>}
+            </div>
+
+            <a
+              href={contadoDownloadUrl}
+              download={`CONTADO_FINAL_${new Date().toISOString().slice(0,10)}.xlsx`}
+              style={{ display: 'inline-block', padding: '0.65rem 1.4rem', background: '#16a34a', color: '#fff', textDecoration: 'none', borderRadius: '8px', fontWeight: 700, fontSize: '0.9rem' }}
+            >
+              📥 Descargar FINAL
+            </a>
+          </div>
+        )}
+      </div>
+
+      {/* Leyenda */}
+      <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', padding: '0.9rem 1.1rem', background: '#f8fafc', fontSize: '0.82rem', color: '#475569', marginBottom: '1rem' }}>
+        <strong style={{ display: 'block', marginBottom: '0.4rem' }}>📌 Leyenda de colores en el FINAL</strong>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.7rem' }}>
+          <span>🔴 <strong>Rojo</strong> — el estado de la guía cambió en Transoft respecto a la planilla anterior. Revisión urgente.</span>
+          <span>🟡 <strong>Amarillo</strong> — guía nueva del día. Completar JUSTIFICACIÓN, REFERENTE, ESTADO y OBSERVACIÓN manualmente.</span>
+          <span>⚪ <strong>Sin color</strong> — existente sin cambios. Anotaciones preservadas.</span>
+        </div>
+      </div>
+
+      {/* Tabla editable */}
+      {contadoTableLoading && (
+        <div style={{ padding: '2rem', textAlign: 'center', color: '#2563eb', background: '#eff6ff', borderRadius: '10px', marginBottom: '1rem' }}>
+          ⏳ Cargando tabla editable...
+        </div>
+      )}
+      {contadoTableData && !contadoTableLoading && (
+        <div ref={contadoTableRef} style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1rem', background: '#fff' }}>
+          <h3 style={{ marginTop: 0, marginBottom: '0.8rem' }}>📋 Tabla editable — FINAL</h3>
+          <ContadoTable
+            rows={contadoTableData.rows}
+            columns={contadoTableData.columns}
+            onSave={handleContadoSave}
+            saveLoading={contadoSaveLoading}
+          />
+        </div>
+      )}
+    </div>
+  )
+
   /* ───────────── MAIN RENDER ───────────── */
 
   return (
@@ -991,8 +1278,9 @@ export default function HomePage() {
       {renderProcessSelector()}
       {renderTabs()}
 
-      {activeTab === 'datos' && renderDatosTab()}
-      {activeTab === 'auditoria' && renderAuditoriaTab()}
+      {activeTab === 'datos' && activeProcess === 'contado' && renderContadoPanel()}
+      {activeTab === 'datos' && activeProcess !== 'contado' && renderDatosTab()}
+      {activeTab === 'auditoria' && activeProcess !== 'contado' && renderAuditoriaTab()}
     </div>
   )
 }

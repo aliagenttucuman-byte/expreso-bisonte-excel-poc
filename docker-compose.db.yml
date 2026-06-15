@@ -1,0 +1,40 @@
+version: "3.9"
+
+# Bases de datos para Expreso Bisonte PoC
+# Postgres :5435  — datos operativos (guías, merges, historial)
+# Qdrant   :6333  — vectores para consultas IA
+
+services:
+  bisonte-db:
+    image: postgres:16-alpine
+    container_name: bisonte-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       bisonte
+      POSTGRES_USER:     bisonte
+      POSTGRES_PASSWORD: bisonte2026
+    ports:
+      - "5435:5432"
+    volumes:
+      - bisonte-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bisonte -d bisonte"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  bisonte-qdrant:
+    image: qdrant/qdrant:latest
+    container_name: bisonte-qdrant
+    restart: unless-stopped
+    ports:
+      - "6335:6333"
+      - "6336:6334"
+    volumes:
+      - bisonte-qdrant-data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: "6334"
+
+volumes:
+  bisonte-db-data:
+  bisonte-qdrant-data:
