@@ -13,7 +13,9 @@ REGLAS:
   2. Nuevos (solo en SISTEMA): van a FINAL sin anotaciones (celdas vacías) → carga manual.
      Se pintan en AMARILLO para que el equipo los identifique fácil.
   3. Eliminados (en INICIAL pero ya NO en SISTEMA): se descartan (ya cobrados/cerrados).
-  4. Columna nueva "DIAS_ATRASO": fecha hoy − guiafec (fecha de entrega).
+  4. Columna nueva "DIAS_ATRASO": fecha hoy − fechaedit (última edición en Transoft).
+  5. SISTEMA se filtra por estado=ED antes del merge (otras matrices manejan el resto).
+  6. Duplicados en SISTEMA se eliminan — se queda con la primera ocurrencia por nro.
 
 CAMPOS MANUALES (solo en INICIAL/FINAL, no en SISTEMA):
   JUSTIFICACIÓN, REFERENTE, ESTADO, OBSERVACIÓN
@@ -75,7 +77,11 @@ FINAL_COLS = [
     "tiporec",
     "sucursal",
     "nrogen_a",
+    "__ORIGEN__",   # NUEVO | EXISTENTE | EXISTENTE_CAMBIO — para badge en UI
 ]
+
+# Índice (1-based) de fechaedit en FINAL_COLS — para pintar la celda por columna
+_FECHAEDIT_COL_IDX = FINAL_COLS.index("fechaedit") + 1 if "fechaedit" in FINAL_COLS else None
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -102,9 +108,9 @@ def _sheet_to_dicts(ws: openpyxl.worksheet.worksheet.Worksheet) -> tuple[list[st
         row: dict[str, Any] = {}
         for c, h in enumerate(headers, 1):
             row[h] = ws.cell(r, c).value
-        # Solo incluir filas con nro válido (empieza con A. o B.)
+        # Solo incluir filas con nro válido (empieza con A., B. o R.)
         nro = row.get("nro") or row.get("NRO") or ""
-        if nro and str(nro).strip()[:2] in ("A.", "B."):
+        if nro and str(nro).strip()[:2] in ("A.", "B.", "R."):
             row["nro"] = str(nro).strip()
             rows.append(row)
     return headers, rows
@@ -158,6 +164,18 @@ def _normalize_estado(v: Any) -> str:
     return str(v).strip().upper()
 
 
+def _hay_diferencia(importe: Any, saldo: Any) -> bool:
+    """Detecta si importe != saldo (diferencia real, no redondeo de centavos)."""
+    try:
+        imp = float(importe) if importe not in (None, "", "nan") else None
+        sal = float(saldo)   if saldo   not in (None, "", "nan") else None
+        if imp is None or sal is None:
+            return False
+        return abs(imp - sal) > 0.01  # tolerancia 1 centavo
+    except (TypeError, ValueError):
+        return False
+
+
 # ── Función principal ─────────────────────────────────────────────────────────
 
 def merge_contado(
@@ -194,7 +212,19 @@ def merge_contado(
     ws_sis = get_sheet(wb_sis, sheet_sistema)
 
     _, rows_ini = _sheet_to_dicts(ws_ini)
-    _, rows_sis = _sheet_to_dicts(ws_sis)
+    _, rows_sis_raw = _sheet_to_dicts(ws_sis)
+
+    # Sin filtro de estado — traer todos los registros del SISTEMA
+    # (el foco operativo es ED, pero Edith necesita ver el panorama completo)
+
+    # Deduplicar SISTEMA por nro (pago a cuenta + nota de crédito generan duplicados)
+    # Se queda con la primera ocurrencia
+    rows_sis: list[dict] = []
+    seen_nros: set[str] = set()
+    for r in rows_sis_raw:
+        if r["nro"] not in seen_nros:
+            seen_nros.add(r["nro"])
+            rows_sis.append(r)
 
     # Indexar por nro
     dict_ini: dict[str, dict] = {r["nro"]: r for r in rows_ini}
@@ -241,11 +271,28 @@ def merge_contado(
             # Limpiar #N/A
             if str(v) in ("#N/A", "#NA", "nan"):
                 v = ""
+            # Redondear importe y saldo a 2 decimales
+            if col_name in ("importe", "saldo") and v not in (None, ""):
+                try:
+                    v = round(float(v), 2)
+                except (TypeError, ValueError):
+                    pass
             cell = ws_out.cell(row_out, c, v)
             cell.font = FONT_NORMAL
             cell.alignment = ALIGN_LEFT
+            if col_name in ("importe", "saldo") and isinstance(v, float):
+                cell.number_format = '#,##0.00'
             if fill:
                 cell.fill = fill
+
+        # Pintar celda fechaedit de rojo si el atraso supera tolerancia por sucdest
+        # CC → > 2 días, resto → > 7 días
+        dias    = row_data.get("DIAS_ATRASO", "")
+        sucdest = str(row_data.get("sucdest", "") or "").strip().upper()
+        if isinstance(dias, int) and _FECHAEDIT_COL_IDX:
+            tolerancia = 0 if sucdest == "CC" else 7
+            if dias > tolerancia:
+                ws_out.cell(row_out, _FECHAEDIT_COL_IDX).fill = FILL_ROJO
 
         # (sin columnas extra)
 
@@ -276,14 +323,32 @@ def merge_contado(
                 v = ""
             row_data[col] = v
 
-        # Días de atraso
+        # ESTADO siempre desde SISTEMA (lo pone Transoft, no Edith)
+        row_data["ESTADO"] = estado_sis
+
+        # REFERENTE: si viene vacío del INICIAL → auto-sugerir desde succobro
+        if not str(row_data.get("REFERENTE", "") or "").strip():
+            succobro_ref = str(r_sis.get("succobro", "") or "").strip().upper()
+            if succobro_ref:
+                row_data["REFERENTE"] = succobro_ref
+                stats["referente_auto"] = stats.get("referente_auto", 0) + 1
+
+        # Auto-detectar VER DIF: si importe != saldo y OBSERVACIÓN vacía → sugerir
+        importe = r_sis.get("importe")
+        saldo   = r_sis.get("saldo")
+        obs_actual = str(row_data.get("OBSERVACIÓN", "") or "").strip()
+        if _hay_diferencia(importe, saldo) and not obs_actual:
+            row_data["OBSERVACIÓN"] = "VER DIF"
+            stats["ver_dif_auto"] = stats.get("ver_dif_auto", 0) + 1
+
+        # Días de atraso — desde fechaedit (última edición en Transoft = fecha de entrega)
         row_data["DIAS_ATRASO"] = _calc_dias_atraso(r_sis.get("fechaedit"))
 
         # Metadatos para columnas extra
         row_data["__estado_sis__"] = estado_sis
         row_data["__origen__"] = "EXISTENTE_CAMBIO" if cambio else "EXISTENTE"
+        row_data["__ORIGEN__"] = row_data["__origen__"]
 
-        # Sin color por ahora — se agregará por columna cuando corresponda
         write_row(row_data, None)
 
     # 2. NUEVOS — solo datos del sistema, campos manuales vacíos
@@ -297,11 +362,31 @@ def merge_contado(
         for col in MANUAL_COLS:
             row_data[col] = ""  # vacío → carga manual
 
+        # Pre-poblar ESTADO con el estado de Transoft para los nuevos
+        # Edith lo confirma o corrige — no arranca de cero
+        estado_transoft = _normalize_estado(r_sis.get("estado"))
+        if estado_transoft:
+            row_data["ESTADO"] = estado_transoft
+            stats["estado_auto"] = stats.get("estado_auto", 0) + 1
+
+        # Auto-sugerir REFERENTE desde succobro (regla Edith: 90% correlación directa)
+        succobro = str(r_sis.get("succobro", "") or "").strip().upper()
+        if succobro:
+            row_data["REFERENTE"] = succobro
+            stats["referente_auto"] = stats.get("referente_auto", 0) + 1
+
+        # Auto-detectar VER DIF en nuevos también
+        importe = r_sis.get("importe")
+        saldo   = r_sis.get("saldo")
+        if _hay_diferencia(importe, saldo):
+            row_data["OBSERVACIÓN"] = "VER DIF"
+            stats["ver_dif_auto"] = stats.get("ver_dif_auto", 0) + 1
+
         row_data["DIAS_ATRASO"] = _calc_dias_atraso(r_sis.get("fechaedit"))
         row_data["__estado_sis__"] = _normalize_estado(r_sis.get("estado"))
         row_data["__origen__"] = "NUEVO"
+        row_data["__ORIGEN__"] = "NUEVO"
 
-        # Sin color por ahora — se agregará por columna cuando corresponda
         write_row(row_data, None)
 
     # ── Ajustar ancho de columnas ─────────────────────────────────────────────

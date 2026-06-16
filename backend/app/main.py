@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1 import excel as excel_router
 from app.api.v1.endpoints.contado import router as contado_router
+from app.api.v1.endpoints.ws_contado import router as ws_router
 
 app = FastAPI(title=settings.APP_NAME, version="0.1.0")
 
@@ -18,6 +19,7 @@ app.add_middleware(
 
 app.include_router(excel_router.router, prefix="/api/v1")
 app.include_router(contado_router, prefix="/api/v1/excel")
+app.include_router(ws_router, prefix="/api/v1")
 
 @app.get("/health")
 def health():
