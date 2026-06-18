@@ -23,9 +23,9 @@ export interface CellLock {
 }
 
 const WS_URL = (() => {
-  const proto    = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const hostname = window.location.hostname
-  return `${proto}://${hostname}:9000/api/v1/ws/contado`
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const host  = window.location.host  // hostname + puerto del browser (ej: screens-cafe.trycloudflare.com)
+  return `${proto}://${host}/api/v1/ws/contado`
 })()
 
 function getTabId(): string {
