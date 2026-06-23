@@ -64,3 +64,10 @@ backend/temp/
 uploads_temp/
 *.xlsx
 __pycache__/
+
+# Hermes / agents
+.hermes.md
+.claude/
+
+# Frontend build copiado a backend
+backend/static/
