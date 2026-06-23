@@ -147,13 +147,13 @@ def _calc_dias_atraso(fechaedit: Any) -> int | str:
 def _es_rojo_por_atraso(dias_atraso: Any, succobro: Any) -> bool:
     """
     Regla de Edith — tolerancia por sucursal:
-      - Casa Central (CC): más de 4 días → rojo
+      - Casa Central (CC): cualquier día de atraso → rojo (tolerancia = 0)
       - Resto de sucursales: más de 7 días → rojo
     """
     if not isinstance(dias_atraso, int):
         return False
     suc = str(succobro or "").strip().upper()
-    tolerancia = 4 if suc == "CC" else 7
+    tolerancia = 0 if suc == "CC" else 7
     return dias_atraso > tolerancia
 
 
@@ -349,7 +349,8 @@ def merge_contado(
         row_data["__origen__"] = "EXISTENTE_CAMBIO" if cambio else "EXISTENTE"
         row_data["__ORIGEN__"] = row_data["__origen__"]
 
-        write_row(row_data, None)
+        fill_fila = FILL_ROJO if cambio else None
+        write_row(row_data, fill_fila)
 
     # 2. NUEVOS — solo datos del sistema, campos manuales vacíos
     for nro in sorted(nros_nuevos):
@@ -387,7 +388,7 @@ def merge_contado(
         row_data["__origen__"] = "NUEVO"
         row_data["__ORIGEN__"] = "NUEVO"
 
-        write_row(row_data, None)
+        write_row(row_data, FILL_AMARILLO)
 
     # ── Ajustar ancho de columnas ─────────────────────────────────────────────
     col_widths = {
@@ -545,17 +546,58 @@ def table_to_excel(columns: list[str], rows: list[dict], orig_bytes: bytes | Non
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=False)
         ws.column_dimensions[cell.column_letter].width = max(12, len(col_name) + 4)
 
+    # Índices de columnas con reglas de color (1-based)
+    def col_idx(name):
+        return columns.index(name) + 1 if name in columns else None
+
+    dias_col_idx     = col_idx("DIAS_ATRASO")
+    observ_col_idx   = col_idx("OBSERVACIÓN")
+    fechaedit_col_idx = col_idx("fechaedit")
+    succobro_col_idx  = col_idx("succobro")
+
+    FILL_VERDE   = PatternFill(start_color="FFDCFCE7", end_color="FFDCFCE7", fill_type="solid")
+    FILL_AMARILLO_CELDA = PatternFill(start_color="FFFEF9C3", end_color="FFFEF9C3", fill_type="solid")
+
     # Datos
     for row_idx, row in enumerate(rows, 2):
-        color = str(row.get("_color", "none"))
-        fill = RED_FILL if color == "red" else (YELLOW_FILL if color == "yellow" else None)
-
-        for col_idx, col_name in enumerate(columns, 1):
+        for col_idx_iter, col_name in enumerate(columns, 1):
             val = row.get(col_name, "")
-            cell = ws.cell(row=row_idx, column=col_idx, value=val if val != "" else None)
+            cell = ws.cell(row=row_idx, column=col_idx_iter, value=val if val != "" else None)
             cell.font = DATA_FONT
-            if fill:
-                cell.fill = fill
+
+        # Regla 1 — DIAS_ATRASO: verde / amarillo / rojo según tolerancia
+        if dias_col_idx:
+            dias_val = row.get("DIAS_ATRASO", "")
+            sucdest = str(row.get("sucdest", "") or "").strip().upper()
+            tolerancia = 0 if sucdest == "CC" else 7
+            try:
+                dias_int = int(dias_val)
+                celda = ws.cell(row=row_idx, column=dias_col_idx)
+                if dias_int > tolerancia:
+                    celda.fill = RED_FILL
+                elif dias_int > int(tolerancia * 0.7):
+                    celda.fill = FILL_AMARILLO_CELDA
+                elif dias_int >= 0:
+                    celda.fill = FILL_VERDE
+            except (ValueError, TypeError):
+                pass
+
+        # Regla 2 — OBSERVACIÓN: rojo si valor es "VER DIF"
+        if observ_col_idx:
+            obs_val = str(row.get("OBSERVACIÓN", "") or "").strip().upper()
+            if obs_val == "VER DIF":
+                ws.cell(row=row_idx, column=observ_col_idx).fill = RED_FILL
+
+        # Regla 3 — fechaedit: rojo si DIAS_ATRASO supera tolerancia
+        if fechaedit_col_idx and dias_col_idx:
+            dias_val = row.get("DIAS_ATRASO", "")
+            sucdest = str(row.get("sucdest", "") or "").strip().upper()
+            tolerancia = 0 if sucdest == "CC" else 7
+            try:
+                if int(dias_val) > tolerancia:
+                    ws.cell(row=row_idx, column=fechaedit_col_idx).fill = RED_FILL
+            except (ValueError, TypeError):
+                pass
 
     ws.freeze_panes = "A2"
 

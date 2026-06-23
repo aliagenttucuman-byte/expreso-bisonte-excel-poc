@@ -647,8 +647,8 @@ export default function HomePage() {
   /* ───────────── PROCESS SELECTOR ───────────── */
 
   const renderProcessSelector = () => (
-    <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-      <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#334155' }}>Proceso:</span>
+    <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: '#1e293b', borderRadius: '10px', border: '1px solid #334155', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+      <span style={{ fontWeight: 600, fontSize: '0.85rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Proceso</span>
       <select
         value={activeProcess}
         onChange={(e) => {
@@ -659,7 +659,7 @@ export default function HomePage() {
           setSheetPreviews(null)
           setPipelineEdits(null)
         }}
-        style={{ padding: '0.45rem 0.7rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.9rem', background: '#fff', cursor: 'pointer', minWidth: '220px' }}
+        style={{ padding: '0.45rem 0.7rem', borderRadius: '8px', border: '1px solid #475569', fontSize: '0.9rem', background: '#0f172a', color: '#e2e8f0', cursor: 'pointer', minWidth: '220px' }}
       >
         {PROCESSES.map((p) => (
           <option key={p.id} value={p.id}>{p.label}</option>
@@ -668,7 +668,7 @@ export default function HomePage() {
 
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
-          {activeProcess === 'cdo_pf' ? '2 orígenes → 2 salidas' : 'En definición con operación'}
+          {activeProcess === 'cdo_pf' ? '2 orígenes → 2 salidas' : activeProcess === 'contado' ? 'INICIAL + SISTEMA → FINAL' : 'En definición con operación'}
         </span>
       </div>
     </div>
@@ -677,7 +677,7 @@ export default function HomePage() {
   /* ───────────── TABS ───────────── */
 
   const renderTabs = () => (
-    <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '1rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.25rem' }}>
+    <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '1rem', borderBottom: '1px solid #334155', paddingBottom: '0' }}>
       {TABS.map((tab) => {
         const isActive = activeTab === tab.id
         const isDisabled = false
@@ -687,16 +687,17 @@ export default function HomePage() {
             onClick={() => !isDisabled && setActiveTab(tab.id)}
             disabled={isDisabled}
             style={{
-              padding: '0.55rem 1rem',
+              padding: '0.6rem 1.1rem',
               borderRadius: '8px 8px 0 0',
               border: 'none',
-              background: isActive ? '#fff' : 'transparent',
-              color: isDisabled ? '#94a3b8' : isActive ? '#2563eb' : '#64748b',
+              background: isActive ? '#1e293b' : 'transparent',
+              color: isDisabled ? '#475569' : isActive ? '#3b82f6' : '#64748b',
               fontWeight: isActive ? 700 : 500,
               cursor: isDisabled ? 'not-allowed' : 'pointer',
               fontSize: '0.88rem',
-              borderBottom: isActive ? '2px solid #2563eb' : '2px solid transparent',
-              marginBottom: '-2px',
+              borderBottom: isActive ? '2px solid #3b82f6' : '2px solid transparent',
+              marginBottom: '-1px',
+              transition: 'all 0.15s',
             }}
           >
             {tab.label}
@@ -1124,41 +1125,45 @@ export default function HomePage() {
 
   const renderContadoPanel = () => (
     <div style={{ padding: '1rem 0' }}>
-      <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.2rem', background: '#fff', marginBottom: '1rem' }}>
-        <h3 style={{ marginTop: 0, marginBottom: '0.3rem' }}>💰 Merge Cobranzas Contado</h3>
-        <p style={{ color: '#475569', fontSize: '0.84rem', marginBottom: '1rem', marginTop: 0 }}>
-          Cargá la planilla <strong>INICIAL</strong> (trabajo acumulado de Edith) y la planilla <strong>SISTEMA</strong> (descarga fresca de Transoft). El sistema genera el <strong>FINAL</strong> listo para trabajar.
+      <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', padding: '1.2rem', marginBottom: '1rem' }}>
+        <h3 style={{ marginTop: 0, marginBottom: '0.3rem', color: '#f1f5f9', fontWeight: 700, letterSpacing: '-0.02em' }}>Merge Cobranzas Contado</h3>
+        <p style={{ color: '#64748b', fontSize: '0.84rem', marginBottom: '1rem', marginTop: 0 }}>
+          Cargá la planilla <strong style={{ color: '#94a3b8' }}>INICIAL</strong> (trabajo acumulado de Edith) y la planilla <strong style={{ color: '#94a3b8' }}>SISTEMA</strong> (descarga fresca de Transoft). El sistema genera el <strong style={{ color: '#3b82f6' }}>FINAL</strong> listo para trabajar.
         </p>
 
-        {/* Upload INICIAL */}
+        {/* Upload inputs */}
         <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: '1fr 1fr', marginBottom: '1rem' }}>
-          <div>
-            <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', fontSize: '0.85rem' }}>
-              📂 INICIAL <span style={{ color: '#64748b', fontWeight: 400 }}>(planilla que venís trabajando)</span>
+          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '10px', padding: '1rem' }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.8rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              INICIAL <span style={{ color: '#64748b', fontWeight: 400, textTransform: 'none' }}>(con anotaciones de Edith)</span>
             </label>
             <input
               type="file"
               accept=".xlsx,.xls"
               onChange={(e) => setContadoInicial(e.target.files?.[0] ?? null)}
-              style={{ fontSize: '0.83rem', width: '100%' }}
+              style={{ fontSize: '0.83rem', width: '100%', color: '#94a3b8' }}
             />
             {contadoInicial && (
-              <div style={{ fontSize: '0.78rem', color: '#16a34a', marginTop: '0.25rem' }}>✓ {contadoInicial.name}</div>
+              <div style={{ fontSize: '0.78rem', color: '#22c55e', marginTop: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                <span>✓</span> {contadoInicial.name}
+              </div>
             )}
           </div>
 
-          <div>
-            <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', fontSize: '0.85rem' }}>
-              🔄 SISTEMA <span style={{ color: '#64748b', fontWeight: 400 }}>(descarga de hoy de Transoft)</span>
+          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '10px', padding: '1rem' }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.8rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              SISTEMA <span style={{ color: '#64748b', fontWeight: 400, textTransform: 'none' }}>(descarga de hoy de Transoft)</span>
             </label>
             <input
               type="file"
               accept=".xlsx,.xls"
               onChange={(e) => setContadoSistema(e.target.files?.[0] ?? null)}
-              style={{ fontSize: '0.83rem', width: '100%' }}
+              style={{ fontSize: '0.83rem', width: '100%', color: '#94a3b8' }}
             />
             {contadoSistema && (
-              <div style={{ fontSize: '0.78rem', color: '#16a34a', marginTop: '0.25rem' }}>✓ {contadoSistema.name}</div>
+              <div style={{ fontSize: '0.78rem', color: '#22c55e', marginTop: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                <span>✓</span> {contadoSistema.name}
+              </div>
             )}
           </div>
         </div>
@@ -1196,15 +1201,17 @@ export default function HomePage() {
           onClick={runContadoMerge}
           disabled={contadoLoading || !contadoInicial || !contadoSistema}
           style={{
-            padding: '0.6rem 1.4rem',
-            background: contadoLoading ? '#94a3b8' : '#2563eb',
-            color: '#fff',
-            border: 'none',
+            padding: '0.7rem 1.6rem',
+            background: contadoLoading ? '#334155' : (!contadoInicial || !contadoSistema) ? '#1e293b' : 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+            color: (!contadoInicial || !contadoSistema) ? '#475569' : '#fff',
+            border: '1px solid',
+            borderColor: contadoLoading ? '#475569' : (!contadoInicial || !contadoSistema) ? '#334155' : '#3b82f6',
             borderRadius: '8px',
             fontWeight: 700,
-            fontSize: '0.9rem',
-            cursor: contadoLoading ? 'not-allowed' : 'pointer',
+            fontSize: '0.95rem',
+            cursor: (contadoLoading || !contadoInicial || !contadoSistema) ? 'not-allowed' : 'pointer',
             marginBottom: '1rem',
+            letterSpacing: '-0.01em',
           }}
         >
           {contadoLoading ? '⏳ Generando FINAL...' : '⚡ Generar FINAL'}
@@ -1220,32 +1227,32 @@ export default function HomePage() {
         {/* Estadísticas + descarga */}
         {contadoStats && contadoDownloadUrl && (
           <div>
-            <div style={{ display: 'grid', gap: '0.7rem', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: '1rem' }}>
+            <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: '1rem' }}>
               {[
-                { label: 'Existentes preservados', value: contadoStats.existentes, color: '#16a34a' },
-                { label: '🔴 Estado cambió', value: contadoStats.estado_cambio, color: '#dc2626' },
-                { label: '🟡 Nuevos del día', value: contadoStats.nuevos, color: '#d97706' },
-                { label: 'Eliminados (cobrados)', value: contadoStats.eliminados, color: '#6b7280' },
+                { label: 'Existentes', value: contadoStats.existentes, color: '#22c55e', bg: '#052e16' },
+                { label: 'Estado cambió', value: contadoStats.estado_cambio, color: '#f87171', bg: '#2d0a0a' },
+                { label: 'Nuevos del día', value: contadoStats.nuevos, color: '#fbbf24', bg: '#271d00' },
+                { label: 'Eliminados', value: contadoStats.eliminados, color: '#64748b', bg: '#1e293b' },
               ].map((s) => (
-                <div key={s.label} style={{ border: '1px solid #e2e8f0', borderRadius: '10px', padding: '0.7rem', background: '#f8fafc', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: s.color }}>{s.value}</div>
-                  <div style={{ fontSize: '0.75rem', color: '#475569', marginTop: '0.15rem' }}>{s.label}</div>
+                <div key={s.label} style={{ border: `1px solid ${s.color}33`, borderRadius: '10px', padding: '0.9rem', background: s.bg, textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.8rem', fontWeight: 800, color: s.color, lineHeight: 1 }}>{s.value}</div>
+                  <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
                 </div>
               ))}
             </div>
 
-            <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '10px', padding: '0.8rem 1rem', marginBottom: '0.8rem', fontSize: '0.84rem', color: '#166534' }}>
+            <div style={{ background: '#052e16', border: '1px solid #22c55e44', borderRadius: '10px', padding: '0.8rem 1rem', marginBottom: '0.8rem', fontSize: '0.84rem', color: '#86efac' }}>
               <strong>✅ FINAL generado.</strong> {contadoStats.existentes + contadoStats.nuevos} guías totales.
-              {contadoStats.estado_cambio > 0 && <> · <strong style={{ color: '#dc2626' }}>{contadoStats.estado_cambio} en ROJO</strong> (estado cambió en Transoft — revisar).</>}
-              {contadoStats.nuevos > 0 && <> · <strong style={{ color: '#d97706' }}>{contadoStats.nuevos} en AMARILLO</strong> (nuevas del día — carga manual).</>}
+              {contadoStats.estado_cambio > 0 && <> · <strong style={{ color: '#f87171' }}>{contadoStats.estado_cambio} en ROJO</strong> (estado cambió en Transoft — revisar).</>}
+              {contadoStats.nuevos > 0 && <> · <strong style={{ color: '#fbbf24' }}>{contadoStats.nuevos} en AMARILLO</strong> (nuevas del día — carga manual).</>}
             </div>
 
             <a
               href={contadoDownloadUrl}
               download={`CONTADO_FINAL_${new Date().toISOString().slice(0,10)}.xlsx`}
-              style={{ display: 'inline-block', padding: '0.65rem 1.4rem', background: '#16a34a', color: '#fff', textDecoration: 'none', borderRadius: '8px', fontWeight: 700, fontSize: '0.9rem' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.4rem', background: '#16a34a', color: '#fff', textDecoration: 'none', borderRadius: '8px', fontWeight: 700, fontSize: '0.9rem' }}
             >
-              📥 Descargar FINAL
+              ↓ Descargar FINAL
             </a>
           </div>
         )}
@@ -1284,14 +1291,51 @@ export default function HomePage() {
   /* ───────────── MAIN RENDER ───────────── */
 
   return (
-    <div style={{ fontFamily: 'system-ui, sans-serif', padding: '1rem', maxWidth: '1400px', margin: '0 auto', color: '#1e293b' }}>
-      {renderHeader()}
-      {renderProcessSelector()}
-      {renderTabs()}
+    <div style={{
+      fontFamily: "'Inter', 'system-ui', sans-serif",
+      minHeight: '100vh',
+      background: '#0f172a',
+      color: '#e2e8f0',
+    }}>
+      {/* Top navbar */}
+      <div style={{
+        background: '#1e293b',
+        borderBottom: '1px solid #334155',
+        padding: '0 1.5rem',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '1rem',
+        height: '56px',
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <img
+            src="/expreso-bisonte-logo.jpg"
+            alt="Expreso Bisonte"
+            style={{ height: 38, width: 'auto', borderRadius: '6px', objectFit: 'contain' }}
+          />
+          <span style={{ fontWeight: 700, fontSize: '1rem', color: '#f1f5f9', letterSpacing: '-0.02em' }}>
+            Bisonte <span style={{ color: '#3b82f6' }}>IA</span>
+          </span>
+        </div>
+        <div style={{ flex: 1 }} />
+        <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />
+          Sistema activo
+        </div>
+      </div>
 
-      {activeTab === 'datos' && activeProcess === 'contado' && renderContadoPanel()}
-      {activeTab === 'datos' && activeProcess !== 'contado' && renderDatosTab()}
-      {activeTab === 'auditoria' && activeProcess !== 'contado' && renderAuditoriaTab()}
+      {/* Content */}
+      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '1.5rem' }}>
+        {renderProcessSelector()}
+        {renderTabs()}
+
+        {activeTab === 'datos' && activeProcess === 'contado' && renderContadoPanel()}
+        {activeTab === 'datos' && activeProcess !== 'contado' && renderDatosTab()}
+        {activeTab === 'auditoria' && activeProcess !== 'contado' && renderAuditoriaTab()}
+      </div>
     </div>
   )
 }
